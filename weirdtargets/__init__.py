@@ -1,0 +1,1 @@
+from weirdtargets import *
