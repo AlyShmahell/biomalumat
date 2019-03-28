@@ -22,6 +22,7 @@ setup(
 			  "pathos==0.2.3"
 			],
 	entry_points = {
-		'console_scripts': ['closetargets=closetargets.__main__:main'],
+		'console_scripts': ['smalltargets=weirdtargets.smalltargets:main',
+						    'bigtargets=weirdtargets.bigtargets:main'],
       },
 )

@@ -1,1 +1,1 @@
-from weirdtargets import *
+from weirdtargets import SmallTargets, SmallTargetsArgParse, BigTargets, BigTargetsArgParse
