@@ -1,31 +1,61 @@
+"""WeirdTargets Module"""
+##########################################
+#      Future Statement Definitions      #
+##########################################
 from __future__ import division
 from __future__ import print_function
 from __future__ import generator_stop
 from __future__ import unicode_literals
 from __future__ import absolute_import
-import argparse, re, math, json, itertools
-import os, sys, psutil, time, datetime, inspect, multiprocess, multiprocessing
-import ujson, pathos
-import dask.dataframe as dd
-import pandas as pd, numpy as np
-import pathos.multiprocessing as pmp
+##########################################
+#        Python Standard Library         #
+##########################################
+import argparse
+import re 
+import math
+import json 
+import itertools
+import os
+import sys
+import time
+import datetime
+import inspect
+import multiprocess
+import multiprocessing
+##########################################
+#   3rd Party Data Loading & Analysis    #
+##########################################
+import ujson
+import numpy as np
+import pandas as pd
 from tqdm import tqdm
 from gzip import GzipFile
 from toolz import partition_all
+##########################################
+#      3rd Party Parallel Computing      #
+##########################################
+import pathos
+import psutil
+import dask.dataframe as dd
+import pathos.multiprocessing as pmp
 from dask.threaded import get as ddscheduler
 from opentargets import OpenTargetsClient
-
+##########################################
+#       Module Level Dunder Names        #
+##########################################
 __copyright__ = "Copyrights © 2019 Aly shmahell."
 __credits__   = ["Aly Shmahell"]
 __version__   = "0.1.1"
 __maintainer__= "Aly Shmahell"
 __email__     = ["aly.shmahell@gmail.com"]
 __status__    = "Alpha"
-
+##########################################
+##########################################
+##########################################
 
 class NonDaemonicProcess(multiprocess.Process):
     """
-    NoDaemonProcess Class.
+    NonDaemonicProcess Class.
         sets daemon to false.
     """
     def _get_daemon(self):
@@ -38,7 +68,7 @@ class NonDaemonicProcess(multiprocess.Process):
 class NestedPool(pathos.multiprocessing.Pool):
     """
     NestedPool Class.
-        enables nested process pool.
+        enables nested pools.
     """
     Process = NonDaemonicProcess
 
@@ -171,7 +201,7 @@ class BigTargetsArgParse(WeirdTargetsArgParse):
                                                    of json 
                                                    objects."""),
                             required=True)
-        parser.add_argument("--features_dump_path",
+        parser.add_argument("--tmp_dir",
                             type=str,
                             help=self._oneliner("""specify a
                                                    folder that 
@@ -297,24 +327,24 @@ class BigTargets(WeirdTargets):
     Derived Class
         used to define main functionality specific to "problem B".
     """
-    def __init__(self, filename, features_dump_path):
+    def __init__(self, filename, tmp_dir):
         """
         A main function:
             Init Function
         """
         super(BigTargets, self).__init__()
-        self.filename = filename
-        self.features_dump_path = features_dump_path
-        self.ddf = None
-        self.map = multiprocessing.Manager().dict()
-        self.reduce = multiprocessing.Manager().dict()
-        self.target_target_count = 0
-        self.outputs = None
-    def __jsonMapper(self, pyObject, tqdmObject):
+        self.filename       :"Gzipped Dict Collection"        = filename
+        self.tmp_dir        :"Temporary Path"                 = tmp_dir
+        self.tds            :"Target-Disease-Score Dataframe" = None
+        self.targets        :"Targets Dict"                   = {}
+        self.combins        :"Combins Dict"                   = multiprocessing.Manager().dict()
+        self.count          :"Count Value"                    = 0
+        self.outputs        :"Outputs Dict"                   = {}
+    def __parseJSON(self, pyObject, tqdmObject):
         """
         An assistant helper function:
             assists in loading a json object.
-            is mapped using __pdDataframeMapper.
+            is mapped using __jsonToPandas.
         """
         tqdmObject.update(1)
         parsed = ujson.loads(pyObject)
@@ -322,14 +352,14 @@ class BigTargets(WeirdTargets):
                "disease": parsed["disease"]["id"],
                "score": float(parsed["scores"]["association_score"])}
         return obj
-    def __pdDataframeMapper(self, batch, tqdmObject):
+    def __jsonToPandas(self, batch, tqdmObject):
         """
         An assistant helper function:
             assists in loading a json batch.
-            maps json objects using __jsonMapper.
+            maps json objects using __parseJSON.
             is mapped using __H5DiskPersistor.
         """
-        parsedJSON = map(lambda b: self.__jsonMapper(b, tqdmObject), batch)
+        parsedJSON = map(lambda b: self.__parseJSON(b, tqdmObject), batch)
         df = pd.DataFrame.from_records(parsedJSON, columns=["target",
                                                             "disease",
                                                             "score"])
@@ -348,39 +378,51 @@ class BigTargets(WeirdTargets):
         """
         An assistant helper function:
             assists in loading the main json collection.
-            maps json batches batches using __pdDataframeMapper.
+            maps json batches using __jsonToPandas.
             dumps extracted features to H5 file.
         """
         with tqdm(desc=f"Feature Extraction{self.empty_string:>18}") as tqdmObject:
             with GzipFile(self.filename) as f:
-                batches = partition_all(math.floor(psutil.virtual_memory()[1]/(1024**3))*20000, f)
+                batches = partition_all(
+                    math.floor(psutil.virtual_memory()[1]/(1024**3))*20000, f
+                )
                 while True:
-                    df, frames = self.__peek(map(lambda b: self.__pdDataframeMapper(b, tqdmObject), batches))
+                    df, frames = self.__peek(
+                        map(
+                            lambda b: self.__jsonToPandas(b, tqdmObject), batches
+                        )
+                    )
                     if frames == None:
                         break
-                    df.to_hdf(os.path.join(self.features_dump_path,'bigtargets.h5'),
-                              key='df',
-                              mode='a',
-                              format='table',
-                              append=True)
-    def __reduceMapper(self, old, disease):
-        word = f"{sorted([old, disease])}"
-        if word not in self.reduce:
-            self.reduce[word] = 1
-        else:
-            self.reduce[word] += 1
+                    df.to_hdf(
+                        os.path.join(self.tmp_dir,'tds.h5'),
+                        key='tds',
+                        mode='a',
+                        format='table',
+                        append=True
+                    )
+    
     def __MapReduce(self):
+        def __combinLogic(prev_d, curr_d):
+            combin = f"{sorted([prev_d, curr_d])}"
+            print(combin)
+            if combin not in self.combins:
+                self.combins[combin] = 1
+            else:
+                self.combins[combin] += 1
         with pmp.Pool(pmp.cpu_count()) as pool:
-            with tqdm(desc="") as tqdmObject:
-                for disease, target in zip(self.ddf.disease, self.ddf.target):
+            with tqdm(desc=f"Mapping{self.empty_string:>27}", iterable=range(len(self.tds.target))) as tqdmObject:
+                for disease, target in zip(self.tds.disease, self.tds.target):
                     tqdmObject.update(1)
-                    if target not in self.map:
-                            self.map[target] = [disease]
+                    if target not in self.targets:
+                        tqdmObject.set_postfix({"target": target, "disease": disease})
+                        self.targets[target] = [disease]
                     else:
-                        pool.imap(lambda old: self.__reduceMapper(old, disease), self.map[target])
-                        self.map[target].append(disease)
+                        tqdmObject.set_postfix({"targetELSE": target, "diseaseELSE": disease})
+                        pool.imap(lambda prev_d: __combinLogic(prev_d, disease), self.targets[target])
+                        self.targets[target].append(disease)
         with tqdm(desc=f"Reducing{self.empty_string:>28}") as tqdmObject:
-                self.target_target_count = sum([x for x in self.reduce.values() if x >= 2])
+                self.count = sum([x*(x-1)/2 for x in self.combins.values()])
 
     def __call__(self):
         """
@@ -390,14 +432,14 @@ class BigTargets(WeirdTargets):
             to calculate Target-Target Pairs Which,
             Share More than 2 Diseases (Bipartite Cycles).
         """
-        if not (os.path.exists(os.path.join(self.features_dump_path,'bigtargets.h5'))):
+        if not (os.path.exists(os.path.join(self.tmp_dir,'tds.h5'))):
             self.__H5DiskPersistor()
-        self.ddf     = dd.read_hdf(os.path.join(self.features_dump_path,'bigtargets.h5'),
-                                   key='df').compute(scheduler=ddscheduler)
-        self.outputs = {"Number of Entries": self.ddf["score"].count(),
-                        "Median of Scores" : self.ddf["score"].quantile(.5)}
+        self.tds     = dd.read_hdf(os.path.join(self.tmp_dir,'tds.h5'),
+                                   key='tds').compute(scheduler=ddscheduler)
+        self.outputs = {"Number of Entries": self.tds["score"].count(),
+                        "Median of Scores" : self.tds["score"].quantile(.5)}
         self.__MapReduce()
-        self.outputs["Target-Target"] = self.target_target_count
+        self.outputs["Target-Target"] = self.count
     def __str__(self):
         """
         A main function:

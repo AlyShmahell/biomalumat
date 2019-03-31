@@ -2,7 +2,7 @@ from weirdtargets import BigTargets, BigTargetsArgParse
 
 def main():
     args = BigTargetsArgParse()
-    bigtargets = BigTargets(args['filename'], args['features_dump_path'])
+    bigtargets = BigTargets(args['filename'], args['tmp_dir'])
     bigtargets.testParallelism()
     bigtargets()
     print(bigtargets)
