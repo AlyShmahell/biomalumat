@@ -20,6 +20,7 @@ import sys
 import time
 import datetime
 import inspect
+import collections
 import multiprocess
 import multiprocessing
 ##########################################
@@ -333,13 +334,11 @@ class BigTargets(WeirdTargets):
             Init Function
         """
         super(BigTargets, self).__init__()
-        self.filename       :"Gzipped Dict Collection"        = filename
-        self.tmp_dir        :"Temporary Path"                 = tmp_dir
-        self.tds            :"Target-Disease-Score Dataframe" = None
-        self.targets        :"Targets Dict"                   = {}
-        self.combins        :"Combins Dict"                   = multiprocessing.Manager().dict()
-        self.count          :"Count Value"                    = 0
-        self.outputs        :"Outputs Dict"                   = {}
+        self.filename       :"Gzipped Dict Collection filename" = filename
+        self.tmp_dir        :"Temporary Path"                   = tmp_dir
+        self.tds            :"Target-Disease-Score Dataframe"   = None
+        self.count          :"Count Value"                      = 0
+        self.outputs        :"Outputs Dict"                     = {}
     def __parseJSON(self, pyObject, tqdmObject):
         """
         An assistant helper function:
@@ -401,29 +400,31 @@ class BigTargets(WeirdTargets):
                         format='table',
                         append=True
                     )
-    
     def __MapReduce(self):
-        def __combinLogic(prev_d, curr_d):
-            combin = f"{sorted([prev_d, curr_d])}"
-            print(combin)
-            if combin not in self.combins:
-                self.combins[combin] = 1
-            else:
-                self.combins[combin] += 1
-        with pmp.Pool(pmp.cpu_count()) as pool:
-            with tqdm(desc=f"Mapping{self.empty_string:>27}", iterable=range(len(self.tds.target))) as tqdmObject:
-                for disease, target in zip(self.tds.disease, self.tds.target):
-                    tqdmObject.update(1)
-                    if target not in self.targets:
-                        tqdmObject.set_postfix({"target": target, "disease": disease})
-                        self.targets[target] = [disease]
-                    else:
-                        tqdmObject.set_postfix({"targetELSE": target, "diseaseELSE": disease})
-                        pool.imap(lambda prev_d: __combinLogic(prev_d, disease), self.targets[target])
-                        self.targets[target].append(disease)
-        with tqdm(desc=f"Reducing{self.empty_string:>28}") as tqdmObject:
-                self.count = sum([x*(x-1)/2 for x in self.combins.values()])
-
+        with tqdm(
+            desc=f"Mapping (Stage1){self.empty_string:>17}"
+        ) as tqdmObject:
+            def bagging(x):
+                tqdmObject.update(1)
+                v, c = np.unique(x, return_counts = True)
+                return v[c.argmax()]
+            self.bags      = self.tds.groupby(["target", "disease"]).disease.apply(bagging)
+            self.indexes   = self.tds.target[~self.tds.target.duplicated()]
+        self.counter = collections.Counter()
+        with tqdm(
+            desc=f"Mapping (Stage2){self.empty_string:>17}", iterable=range(len(self.indexes))
+        ) as tqdmObject:
+            for index in self.indexes:
+                tqdmObject.update(1)
+                tqdmObject.set_postfix({"counter length": len(self.counter)})
+                self.counter += collections.Counter(
+                    [
+                        f"{sorted(combination)}" for combination in itertools.combinations(
+                            self.bags[index].values, 2
+                        )
+                    ]
+                )
+        self.count = sum[x*(x-1)/2 for x in self.counter.values()]
     def __call__(self):
         """
         A main function:
