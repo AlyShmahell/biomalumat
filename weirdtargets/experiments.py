@@ -1,40 +1,112 @@
-import pandas as pd
 import numpy as np
-import dask.dataframe as dd
 import collections
 import itertools
 import time
-from tqdm import tqdm
-from numba import njit
 import multiprocessing
 import pathos.multiprocessing as pmp
 from dask.threaded import get as ddscheduler
-from multiprocessing import Manager, Lock
+import collections
+from multiprocessing.managers import MakeProxyType, SyncManager, BaseManager, DictProxy
+
+CollectionsCounterBaseProxy = MakeProxyType("CollectionsCounterBaseProxy", 
+                            [
+                                '__add__', '__and__', '__class__', '__contains__', 
+                                '__delattr__', '__delitem__', '__dict__', '__dir__', 
+                                '__doc__', '__eq__', '__format__', '__ge__', 
+                                 '__getitem__', '__gt__', 
+                                '__hash__', '__iadd__', '__iand__', 
+                                '__ior__', '__isub__', 
+                                '__iter__', '__le__', '__len__', '__lt__', 
+                                '__missing__', '__module__', '__ne__', '__neg__', 
+                                '__or__', '__pos__', '__reduce__', '__call__',
+                                '__reduce_ex__', '__repr__', 
+                                '__setitem__', '__sizeof__', '__str__', '__sub__', 
+                                '__subclasshook__', '__weakref__', '_keep_positive', 
+                                'clear', 'copy', 'elements', 'fromkeys', 'get', 
+                                'items', 'keys', 'most_common', 'pop', 'popitem', 
+                                'setdefault', 'subtract', 'update', 'values'
+                                ]
+                        )
+
+class CollectionsCounterProxy(CollectionsCounterBaseProxy):
+    def __iadd__(self, value):
+        self._callmethod('__iadd__', (value,))
+        return self
+
+
+
+counter = collections.Counter()
+manager = None
+def Counter(value=None):
+    global counter
+    counter += collections.Counter(value)
+    return counter
+class CounterManager(BaseManager):
+    pass
+def initManager():
+    global manager
+    CounterManager.register('Counter', Counter, CollectionsCounterProxy)
+    manager = CounterManager()
+    manager.start()
 
 class A(object):
     def __init__(self):
-        self.namespace = Manager().Namespace()
-        self.namespace.counter = collections.Counter()
-        self.data = [np.array(range(8)) for _ in range(10)]
+        self.data = [np.array(range(400)) for _ in range(100)]
+        global manager
+        self.counter = manager.Counter()
+    def parallelFunction(self, x):
+        self.counter += manager.Counter(list(itertools.combinations(x,2)))
     def __call__(self):
-        data = [np.array(range(8)) for _ in range(10)]
-        def __parallelCounterUpdate(x):
-            print("in parallel")
-            with Lock():
-                self.namespace.counter += collections.Counter([f"{sorted(combination)}" for combination in itertools.combinations(x, 2)])
-        with pmp.Pool(pmp.cpu_count(), maxtasksperchild=2) as pool:
-            pool.imap(__parallelCounterUpdate, self.data)
+        start = time.time()
+        with multiprocessing.Pool(multiprocessing.cpu_count()) as pool:
+            print("hey")
+            pool.imap(self.parallelFunction, self.data)
             pool.close()
             pool.join()
-            pool.terminate()
-        print(self.namespace.counter)
+        print("yo")
+        print(len(self.counter), self.counter[(0,1)])
+        print(f"time: {time.time() - start}")
+
+class B(object):
+    def __init__(self):
+        self.data = [np.array(range(400)) for _ in range(100)]
+        self.counter = collections.Counter()        
+    def __call__(self):
+        start = time.time()
+        print("hey")
+        for x in self.data:
+            self.counter += collections.Counter(list(itertools.combinations(x,2)))
+        print("yo")
+        print(len(self.counter), self.counter[(0,1)])
+        print(f"time: {time.time() - start}")
 
 if __name__ == '__main__':
+    initManager()
     a = A()
-    start = time.time()
     a()
-    print(time.time() - start)
+    b = B()
+    b()
 
+
+"""
+from collections import defaultdict
+
+from multiprocessing.managers import MakeProxyType, SyncManager
+
+DefaultDictProxy = MakeProxyType("DefaultDictProxy", [
+    '__contains__', '__delitem__', '__getitem__', '__len__',
+    '__setitem__', 'clear', 'copy', 'default_factory', 'fromkeys',
+    'get', 'items', 'keys', 'pop', 'popitem', 'setdefault',
+    'update', 'values'])
+
+SyncManager.register("defaultdict", defaultdict, DefaultDictProxy)
+# Can also create your own Manager here, just using built in for simplicity
+
+if __name__ == '__main__':
+    with SyncManager() as sm:
+        dd = sm.defaultdict(list)
+        print(dd['a'])
+"""
 
 """
 pd.DataFrame.from_records({"a": [0, 1, 2, 1, 2], "b": [10, 20, 30, 40, 50]}).to_hdf(
