@@ -12,3 +12,9 @@ data.castra/
 **/data.castra/
 *.h5
 **/*.h5
+*.gz
+**/*.gz
+*.json.gz
+**/*.json.gz
+.ipynb_checkpoints/
+**/.ipynb_checkpoints/
